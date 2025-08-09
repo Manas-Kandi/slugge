@@ -1,9 +1,24 @@
 import { NavLink, Outlet, useParams } from 'react-router-dom'
+import { useEffect, useRef, useState } from 'react'
 import { titleize } from '../../../lib/utils'
 import { BoardCanvas } from './BoardCanvas'
+import { api } from '../../../lib/api'
+import { toast } from 'sonner'
 
 export function ProjectLayout() {
   const { id } = useParams()
+  const [name, setName] = useState<string | null>(null)
+  const [loading, setLoading] = useState<boolean>(true)
+  useEffect(() => {
+    let mounted = true
+    if (!id) return
+    setLoading(true)
+    api.projects.get(id)
+      .then((p) => { if (mounted) setName((p as any).name) })
+      .catch(() => { /* ignore for now */ })
+      .finally(() => { if (mounted) setLoading(false) })
+    return () => { mounted = false }
+  }, [id])
   const tabs = [
     'overview','ingest','processing','atoms','themes','insights','board','publish','settings'
   ]
@@ -11,7 +26,7 @@ export function ProjectLayout() {
     <div>
       <div className="mb-3">
         <div className="text-sm text-text-secondary">Project</div>
-        <h1 className="text-2xl font-semibold">Project {id}</h1>
+        <h1 className="text-2xl font-semibold">{loading ? 'Loading…' : (name || `Project ${id}`)}</h1>
       </div>
       <div className="border-b border-border mb-4">
         <nav className="flex gap-2 overflow-x-auto">
@@ -35,39 +50,152 @@ export const ProjectOverview = () => (
   </div>
 )
 
-export const Ingest = () => (
-  <div className="space-y-3">
-    <div className="card p-6">
-      <div className="text-sm mb-2">Drop transcripts</div>
-      <div className="border border-dashed border-border rounded-lg p-12 text-center text-text-secondary">Drag & drop or click to upload</div>
-      <div className="mt-3 flex justify-end"><button className="btn btn-primary">Start pipeline</button></div>
-    </div>
-    <div className="card p-4">
-      <div className="font-medium mb-2">Files</div>
-      <table className="w-full text-sm">
-        <thead><tr className="text-text-secondary"><th className="text-left py-1">Name</th><th>Status</th><th>Size</th><th/></tr></thead>
-        <tbody><tr><td>interview-01.pdf</td><td>Uploaded</td><td>2.1MB</td><td className="text-right"><button className="btn btn-ghost">Remove</button></td></tr></tbody>
-      </table>
-    </div>
-  </div>
-)
+export const Ingest = () => {
+  const { id } = useParams()
+  const [docs, setDocs] = useState<any[]>([])
+  const [loading, setLoading] = useState<boolean>(false)
+  const [uploading, setUploading] = useState<boolean>(false)
+  const fileRef = useRef<HTMLInputElement | null>(null)
 
-export const Processing = () => (
-  <div className="grid md:grid-cols-3 gap-4">
-    <div className="md:col-span-2 card p-4">
-      <div className="font-medium mb-2">Stage</div>
-      <div className="w-full h-2 bg-surface rounded"><div className="h-2 bg-accent rounded" style={{width: '38%'}}/></div>
-      <div className="text-sm text-text-secondary mt-1">Normalizing transcripts… 38%</div>
-    </div>
-    <div className="card p-4">
-      <div className="font-medium mb-2">Events</div>
-      <div className="text-sm text-text-secondary space-y-1">
-        <div>Removed 53 filler words</div>
-        <div>Standardized 5 speaker names</div>
+  const fmtSize = (n: number) => {
+    if (n > 1e6) return `${(n / 1e6).toFixed(1)}MB`
+    if (n > 1e3) return `${(n / 1e3).toFixed(1)}KB`
+    return `${n}B`
+  }
+
+  const refresh = async () => {
+    if (!id) return
+    setLoading(true)
+    try {
+      const rows = await api.documents.list(id)
+      setDocs(rows)
+    } catch (e: any) {
+      console.error(e)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    refresh()
+  }, [id])
+
+  const pick = () => fileRef.current?.click()
+
+  const onFileChange: React.ChangeEventHandler<HTMLInputElement> = async (e) => {
+    const f = e.target.files?.[0]
+    if (!f || !id) return
+    setUploading(true)
+    try {
+      await api.documents.upload(id, f)
+      toast.success('Uploaded')
+      await refresh()
+    } catch (err: any) {
+      toast.error('Upload failed')
+    } finally {
+      setUploading(false)
+      e.currentTarget.value = ''
+    }
+  }
+
+  const removeDoc = async (docId: string) => {
+    if (!id) return
+    try {
+      await api.documents.delete(id, docId)
+      toast.success('Removed')
+      await refresh()
+    } catch (err) {
+      toast.error('Failed to remove')
+    }
+  }
+
+  const startPipeline = async () => {
+    if (!id) return
+    try {
+      await api.processing.start(id)
+      toast.success('Processing started')
+    } catch (err) {
+      toast.error('Failed to start')
+    }
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="card p-6">
+        <div className="text-sm mb-2">Drop transcripts</div>
+        <div
+          className="border border-dashed border-border rounded-lg p-12 text-center text-text-secondary cursor-pointer"
+          onClick={pick}
+        >
+          {uploading ? 'Uploading…' : 'Drag & drop or click to upload'}
+        </div>
+        <input ref={fileRef} type="file" className="hidden" onChange={onFileChange} />
+        <div className="mt-3 flex justify-end"><button className="btn btn-primary" onClick={startPipeline}>Start pipeline</button></div>
+      </div>
+      <div className="card p-4">
+        <div className="font-medium mb-2">Files</div>
+        <table className="w-full text-sm">
+          <thead><tr className="text-text-secondary"><th className="text-left py-1">Name</th><th>Status</th><th>Size</th><th className="text-right">Actions</th></tr></thead>
+          <tbody>
+            {loading ? (
+              <tr><td colSpan={4} className="text-center py-4 text-text-secondary">Loading…</td></tr>
+            ) : docs.length === 0 ? (
+              <tr><td colSpan={4} className="text-center py-4 text-text-secondary">No files yet</td></tr>
+            ) : docs.map(d => (
+              <tr key={d.id} className="border-t border-border">
+                <td className="py-1">{d.file_name}</td>
+                <td>{d.status}</td>
+                <td>{fmtSize(d.size)}</td>
+                <td className="text-right"><button className="btn btn-ghost" onClick={() => removeDoc(d.id)}>Remove</button></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       </div>
     </div>
-  </div>
-)
+  )
+}
+
+export const Processing = () => {
+  const { id } = useParams()
+  const [progress, setProgress] = useState(0)
+  const [stage, setStage] = useState('Idle')
+  const [events, setEvents] = useState<string[]>([])
+
+  useEffect(() => {
+    let mounted = true
+    let timer: any
+    const tick = async () => {
+      if (!id) return
+      try {
+        const s = await api.processing.status(id)
+        if (!mounted) return
+        setProgress(s.progress)
+        setStage(s.stage)
+        setEvents(s.events || [])
+      } catch (e) { /* ignore */ }
+    }
+    tick()
+    timer = setInterval(tick, 1000)
+    return () => { mounted = false; clearInterval(timer) }
+  }, [id])
+
+  return (
+    <div className="grid md:grid-cols-3 gap-4">
+      <div className="md:col-span-2 card p-4">
+        <div className="font-medium mb-2">Stage</div>
+        <div className="w-full h-2 bg-surface rounded"><div className="h-2 bg-accent rounded" style={{width: `${Math.round(progress*100)}%`}}/></div>
+        <div className="text-sm text-text-secondary mt-1">{stage}… {Math.round(progress*100)}%</div>
+      </div>
+      <div className="card p-4">
+        <div className="font-medium mb-2">Events</div>
+        <div className="text-sm text-text-secondary space-y-1 max-h-[300px] overflow-auto pr-2">
+          {events.length === 0 ? <div>No events yet</div> : events.map((e,i) => <div key={i}>{e}</div>)}
+        </div>
+      </div>
+    </div>
+  )
+}
 
 export const Atoms = () => (
   <div className="grid md:grid-cols-2 gap-4">
@@ -127,21 +255,41 @@ export const Board = () => {
   )
 }
 
-export const Publish = () => (
-  <div className="space-y-3">
-    <div className="card p-4">
-      <div className="font-medium mb-2">Share</div>
-      <div className="flex gap-2">
-        <button className="btn btn-primary">Create link</button>
-        <button className="btn btn-ghost">Regenerate</button>
+export const Publish = () => {
+  const { id } = useParams()
+  const [url, setUrl] = useState<string | null>(null)
+
+  const mint = async () => {
+    if (!id) return
+    try {
+      const { url } = await api.share.mint(id)
+      setUrl(url)
+      await navigator.clipboard.writeText(url)
+      toast.success('Share link copied to clipboard')
+    } catch (e) {
+      toast.error('Failed to create link')
+    }
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="card p-4">
+        <div className="font-medium mb-2">Share</div>
+        <div className="flex gap-2">
+          <button className="btn btn-primary" onClick={mint}>Create link</button>
+          <button className="btn btn-ghost" onClick={mint}>Regenerate</button>
+        </div>
+        {url && (
+          <div className="text-sm text-text-secondary mt-2 break-all">{url}</div>
+        )}
+      </div>
+      <div className="card p-4">
+        <div className="font-medium mb-2">PII Summary</div>
+        <div className="text-sm text-text-secondary">0 items detected</div>
       </div>
     </div>
-    <div className="card p-4">
-      <div className="font-medium mb-2">PII Summary</div>
-      <div className="text-sm text-text-secondary">0 items detected</div>
-    </div>
-  </div>
-)
+  )
+}
 
 export const ProjectSettings = () => (
   <div className="grid md:grid-cols-2 gap-3">

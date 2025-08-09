@@ -4,6 +4,7 @@ import { useSnapshot } from 'valtio'
 import { state } from '../lib/store'
 import { slugify } from '../lib/utils'
 import { toast } from 'sonner'
+import { api } from '../lib/api'
 
 export function NewProjectModal() {
   const s = useSnapshot(state)
@@ -32,13 +33,19 @@ export function NewProjectModal() {
           <div className="text-lg font-medium">New Project</div>
           <div className="text-sm text-text-secondary">Name, privacy and defaults</div>
         </div>
-        <form className="p-4 grid gap-3" onSubmit={(e) => {
+        <form className="p-4 grid gap-3" onSubmit={async (e) => {
           e.preventDefault()
           if (!canSubmit) { toast.error('Enter a project name'); return }
-          const id = slug || slugify(name) || Math.random().toString(36).slice(2, 8)
-          toast.success('Project created')
-          state.newProjectOpen = false
-          nav(`/app/projects/${id}/overview`)
+          try {
+            const payload = { name: name.trim(), slug: slug || slugify(name), privacy, default_language: language, default_model: model, budget_cap: Number(budget || '0'), auto_start: autoStart }
+            const created = await api.projects.create(payload)
+            toast.success('Project created')
+            state.newProjectOpen = false
+            const pid = (created as any).id || payload.slug
+            nav(`/app/projects/${pid}/overview`)
+          } catch (err: any) {
+            toast.error(err.message || 'Failed to create project')
+          }
         }}>
           <label className="text-sm">Name
             <input className="input mt-1" value={name} onChange={(e) => { setName(e.target.value); setSlug(slugify(e.target.value)) }} placeholder="eg. Checkout Usability" />

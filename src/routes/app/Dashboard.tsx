@@ -1,25 +1,35 @@
 import { Link } from 'react-router-dom'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useSnapshot } from 'valtio'
 import { state } from '../../lib/store'
 import { toast } from 'sonner'
+import { api } from '../../lib/api'
 
-const demo = [
-  { id: 'p1', name: 'Checkout Usability', updated: '2d', status: 'Needs review', docs: 6, cost: '$3.84' },
-  { id: 'p2', name: 'Onboarding Interviews', updated: '5d', status: 'Ready', docs: 4, cost: '$2.10' }
-]
+type ProjectItem = { id: string; name: string; updated?: string; status?: string; docs?: number; cost?: string }
 
 export function Dashboard() {
   const s = useSnapshot(state)
   const [sort, setSort] = useState<'recent' | 'name'>('recent')
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
+  const [items, setItems] = useState<ProjectItem[]>([])
+  const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    let mounted = true
+    setLoading(true)
+    api.projects.list()
+      .then((res) => { if (mounted) setItems(res as ProjectItem[]) })
+      .catch((err) => toast.error(err.message))
+      .finally(() => setLoading(false))
+    return () => { mounted = false }
+  }, [])
 
   const filtered = useMemo(() => {
     const q = s.searchQuery.toLowerCase().trim()
-    let arr = demo.filter(p => p.name.toLowerCase().includes(q))
+    let arr = items.filter(p => p.name.toLowerCase().includes(q))
     if (sort === 'name') arr = [...arr].sort((a, b) => a.name.localeCompare(b.name))
     return arr
-  }, [s.searchQuery, sort])
+  }, [s.searchQuery, sort, items])
 
   return (
     <div>
@@ -34,7 +44,9 @@ export function Dashboard() {
           <button className="btn btn-primary" onClick={() => (state.newProjectOpen = true)}>New Project</button>
         </div>
       </div>
-      {filtered.length === 0 ? (
+      {loading ? (
+        <div className="card p-6 text-center text-text-secondary">Loading…</div>
+      ) : filtered.length === 0 ? (
         <div className="card p-6 text-center">
           <div className="text-text-secondary">Create a project to begin.</div>
           <button className="btn btn-primary mt-3" onClick={() => (state.newProjectOpen = true)}>New Project</button>
@@ -44,13 +56,13 @@ export function Dashboard() {
           {filtered.map(p => (
             <div key={p.id} className="card p-4 hover:shadow-soft2 transition group">
               <Link to={`/app/projects/${p.id}/overview`} className="font-medium block">{p.name}</Link>
-              <div className="text-sm text-text-secondary mt-1">{p.docs} docs · {p.cost}</div>
-              <div className="mt-2 text-xs">{p.status} • updated {p.updated} ago</div>
+              <div className="text-sm text-text-secondary mt-1">{p.docs ?? 0} docs · {p.cost ?? '$0.00'}</div>
+              <div className="mt-2 text-xs">{p.status ?? 'Active'} • updated {p.updated ?? 'just now'} ago</div>
               <div className="opacity-0 group-hover:opacity-100 transition mt-3 flex gap-2 text-sm">
                 <Link to={`/app/projects/${p.id}/overview`} className="btn btn-ghost">Open</Link>
                 <button className="btn btn-ghost" onClick={() => toast.success('Duplicated')}>Duplicate</button>
                 <button className="btn btn-ghost" onClick={() => toast('Archived')}>Archive</button>
-                <button className="btn btn-ghost text-danger" onClick={() => setConfirmDelete(p.id)}>Delete</button>
+                <button className="btn btn-ghost" onClick={() => setConfirmDelete(p.id)}>Delete</button>
               </div>
             </div>
           ))}
@@ -71,9 +83,9 @@ export function Dashboard() {
               {filtered.map(p => (
                 <tr key={p.id} className="border-t">
                   <td className="p-2"><Link to={`/app/projects/${p.id}/overview`} className="font-medium">{p.name}</Link></td>
-                  <td>{p.status}</td>
-                  <td>{p.docs}</td>
-                  <td>{p.cost}</td>
+                  <td>{p.status ?? 'Active'}</td>
+                  <td>{p.docs ?? 0}</td>
+                  <td>{p.cost ?? '$0.00'}</td>
                   <td className="p-2 text-right"><button className="btn btn-ghost" onClick={() => setConfirmDelete(p.id)}>Delete</button></td>
                 </tr>
               ))}
@@ -96,7 +108,16 @@ export function Dashboard() {
               }} />
               <div className="flex justify-end gap-2">
                 <button className="btn btn-ghost" onClick={() => setConfirmDelete(null)}>Cancel</button>
-                <button id="confirm-btn" className="btn btn-primary" disabled onClick={() => { toast.success('Project deleted'); setConfirmDelete(null) }}>Delete</button>
+                <button id="confirm-btn" className="btn btn-primary" disabled onClick={() => {
+                  const id = confirmDelete!
+                  api.projects.delete(id)
+                    .then(() => {
+                      toast.success('Project deleted')
+                      setItems(prev => prev.filter(p => p.id !== id))
+                      setConfirmDelete(null)
+                    })
+                    .catch(err => toast.error(err.message))
+                }}>Delete</button>
               </div>
             </div>
           </div>

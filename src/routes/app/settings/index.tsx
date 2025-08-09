@@ -1,6 +1,8 @@
 import { NavLink, Outlet } from 'react-router-dom'
 import { loadStripe } from '@stripe/stripe-js'
 import { PayPalScriptProvider } from '@paypal/react-paypal-js'
+import { api } from '../../../lib/api'
+import { toast } from 'sonner'
 
 export function SettingsLayout() {
   const tabs = [
@@ -68,7 +70,19 @@ export function Billing() {
             <div key={plan} className="border rounded-md p-3">
               <div className="font-medium">{plan}</div>
               <div className="text-sm text-text-secondary mb-3">{plan==='Free'?'Good for trials': plan==='Pro'?'For teams':'Invite‑only'}</div>
-              <button className="btn btn-primary w-full">Choose</button>
+              <button className="btn btn-primary w-full" onClick={async () => {
+                try {
+                  const res = await api.billing.checkout(plan)
+                  const url = res.url || (res as any).sessionId
+                  if (url) {
+                    window.open(url, '_blank')
+                  } else {
+                    toast.error('No checkout URL returned')
+                  }
+                } catch (e) {
+                  toast.error('Failed to start checkout')
+                }
+              }}>Choose</button>
             </div>
           ))}
         </div>
@@ -76,10 +90,17 @@ export function Billing() {
       <div className="card p-4">
         <div className="font-medium mb-2">Payment Methods</div>
         <div className="text-sm text-text-secondary mb-2">Stripe & PayPal supported.</div>
-        <PayPalScriptProvider options={{ 'client-id': import.meta.env.VITE_PAYPAL_CLIENT_ID as string }}>
+        <PayPalScriptProvider options={{ clientId: import.meta.env.VITE_PAYPAL_CLIENT_ID as string }}>
           <div className="text-sm">PayPal connected (sandbox)</div>
         </PayPalScriptProvider>
-        <button className="btn btn-ghost mt-2 w-full">Open Stripe Customer Portal</button>
+        <button className="btn btn-ghost mt-2 w-full" onClick={async () => {
+          try {
+            const { url } = await api.billing.portal()
+            if (url) window.open(url, '_blank')
+          } catch (e) {
+            toast.error('Failed to open portal')
+          }
+        }}>Open Stripe Customer Portal</button>
       </div>
     </div>
   )
